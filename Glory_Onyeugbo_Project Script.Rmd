@@ -1,0 +1,865 @@
+---
+title: "Stroke_Prediction"
+author: "Marriah Lewis and Glory Onyeugbo"
+date: "6/18/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load Libraries
+Loading the libraries we a going to use on this project.
+
+```{r}
+library(plyr)
+library(dplyr)
+library(grid)
+library(RColorBrewer)
+library(ggplot2)
+library(reshape)
+library(corrplot)
+library(forcats)
+library(arules)
+library(arulesViz)
+library(rpart)
+library(rpart.plot)
+library(unbalanced)
+library(e1071)
+library(randomForest)
+```
+
+# Reading the Stroke Data
+
+Used the read.csv function to call in the stroke data downloaded from Kaggle.
+
+```{r}
+# Set the working directory.
+setwd("C:\\Users\\17708\\OneDrive\\Desktop\\IST 707 Project")
+# Load the dataset.
+stroke.df <- read.csv("Stroke Data.csv")
+# Print the first 5 instances of the data.
+head(stroke.df[1:5])
+```
+
+Read the structure.
+```{r}
+str(stroke.df) 
+#5110 obs. of  12 variables
+```
+
+# Data Cleaning
+```{r}
+# Assign the data frame to a new data set as to not comprimise the integrity of the original
+stroke_pred <- stroke.df
+
+# remove the id columns since it has no importance to the ultimate goal of this project.
+stroke_pred <- stroke_pred[,-c(1,6:8)]
+
+colnames(stroke_pred)
+# the id column has been removed
+```
+
+## Remove Missing Values and Duplicates
+```{r}
+#check for missing values 
+(sum(is.na(stroke_pred)))
+```
+
+But the BMI column has plenty on NAs that have bit been recognized. The variable is considered a character string when it should be numeric. Convert it to numeric and check again.
+```{r}
+stroke_pred$bmi <- as.numeric(stroke_pred$bmi)
+
+(sum(is.na(stroke_pred)))
+```
+There are 201 NAs in the data set, but that is way too many records to remove. Instead, those missing value will be replaced with the average bmi of all the patients.
+
+
+```{r}
+### Estimate and replace missing values
+stroke_pred$bmi[is.na(stroke_pred$bmi)] <- mean(stroke_pred$bmi, na.rm = TRUE)
+
+sum(is.na(stroke_pred))
+```
+There are no more missing values in the data
+
+# Search for Duplicate Records
+```{r}
+#check for duplicates 
+nrow(stroke_pred[duplicated(stroke_pred),]) #there are no duplicates 
+
+#Just to make sure there are no duplicates 
+stroke_prediction <- stroke_pred[!duplicated(stroke_pred),]
+```
+
+
+## Data Conversions
+```{r}
+#check for missing values 
+# Convert nominal values to factors (hypertension, heart_disease, stroke)
+stroke_prediction$gender          <- factor(stroke_prediction$gender)
+
+stroke_prediction$hypertension    <- factor(stroke_prediction$hypertension)
+
+stroke_prediction$heart_disease   <- factor(stroke_prediction$heart_disease)
+
+stroke_prediction$smoking_status  <- factor(stroke_prediction$smoking_status)
+
+stroke_prediction$stroke          <- factor(stroke_prediction$stroke)
+
+# View The Data Structure
+str(stroke_prediction)
+```
+
+
+## Discretize Age
+```{r}
+# Discetize Age
+(youngest_stroke <- min(stroke_prediction$age))
+(oldest_stroke  <- max(stroke_prediction$age))
+stroke_prediction$age <- cut(stroke_prediction$age, breaks = c(0,10,20,30,40,50,60,70,80,90),
+                    labels=c("child","teens","twenties","thirties","forties","fifties","sixties", "seventies", "eighties"))
+```
+
+
+# Discretize Average Glucose Level
+```{r}
+# Discretize Avg Glucose
+(lowest_glucose   <- min(stroke_prediction$avg_glucose_level))
+(highest_glucose  <- max(stroke_prediction$avg_glucose_level))
+stroke_prediction$avg_glucose_level <- cut(stroke_prediction$avg_glucose_level, breaks = c(50,100,150,200,250,300),
+                    labels=c("50 - 100", "101 - 150", "151 - 200", "201 - 250", "251 - 300"))
+```
+
+
+# Discretize Body Mass Index
+```{r}
+# Discretize Body Mass Index
+(low_bmi   <- min(stroke_prediction$bmi))
+(high_bmi  <- max(stroke_prediction$bmi))
+stroke_prediction$bmi <- cut(stroke_prediction$bmi, breaks = c(0,18.5,25,30,35,40,45,50,60,Inf),
+                    labels = c("Underweight", "Normal Weight", "Overweight", "Moderately Obese", "Severely Obese", "Very Severely Obese", "Morbidly Obese", "Super Obese", "Hyper Obese"))
+```
+
+# Summary of Clean Data set
+```{r}
+summary(stroke_prediction)
+```
+
+Create a barplot
+```{r}
+b <- table(stroke_prediction$age, stroke_prediction$stroke)
+b
+barplot(b, main = "Stroke Risk across All Ages", beside = TRUE, col= brewer.pal(7, "Spectral"),legend.text = rownames((b)),args.legend=list(x="topright",bty="s"))
+```
+
+# EDA
+```{r}
+# How many people have actually had a stroke?
+sum(stroke_prediction$stroke == 1)
+sum(stroke_prediction$stroke == 0)
+
+# What are the ages of people who suffered a stroke?
+tapply(stroke_prediction$stroke == 1, stroke_prediction$age, sum)
+tapply(stroke_prediction$stroke == 0, stroke_prediction$age, sum)
+
+# Which bmi sees the most strokes?
+tapply(stroke_prediction$stroke == 1, stroke_prediction$bmi, sum)
+tapply(stroke_prediction$stroke == 0, stroke_prediction$bmi, sum)
+
+# Which gender suffered from strokes the most.
+tapply(stroke_prediction$stroke == 1, stroke_prediction$gender, sum)
+tapply(stroke_prediction$stroke == 0, stroke_prediction$gender, sum)
+# Majority are females
+
+# Do strokes tend to happen to people with a prior heart condition.
+tapply(stroke_prediction$stroke == 1, stroke_prediction$heart_disease, sum)
+tapply(stroke_prediction$stroke == 0, stroke_prediction$heart_disease, sum)
+# Majority of people who suffered from a stroke had no prior heart disease.
+
+# Does marital status have anything to do with strokes.
+tapply(stroke_prediction$stroke == 1, stroke_prediction$hypertension, sum)
+tapply(stroke_prediction$stroke == 0, stroke_prediction$hypertension, sum)
+# Most of them did not have hypertension.
+
+# iS the likehood of stroke impacted by smoking status
+tapply(stroke_prediction$stroke == 1, stroke_prediction$smoking_status, sum)
+tapply(stroke_prediction$stroke == 0, stroke_prediction$smoking_status, sum)
+# There are more non-smokers and former smokers who had strokes that people that currently smoke and a couple of unknowns. 
+
+# Which gender tend to have the most cases of heart disease?
+tapply(stroke_prediction$heart_disease == 1, stroke_prediction$gender, sum)
+
+# Which age group has the most cases of heart disease?
+tapply(stroke_prediction$heart_disease == 1, stroke_prediction$age, sum)
+
+# Which gender smoke the most?
+tapply(stroke_prediction$smoking_status == "smokes", stroke_prediction$gender, sum)
+
+# Which gender had the most former smokers.
+tapply(stroke_prediction$smoking_status == "formerly smoked", stroke_prediction$gender, sum)
+
+```
+
+
+
+Visualizations
+```{r}
+attach(stroke_prediction)
+
+stroke_count <- count(stroke_prediction, stroke)
+ggplot(stroke_count, aes(y = n)) + geom_bar(stat = "identity", aes(x = stroke, fill = stroke)) + labs(x = 'Stroke', y = 'Count') + ggtitle('Count by Stroke')
+
+#########################################################################################
+age_group_count <- count(stroke_prediction, age)
+ggplot(age_group_count, aes(y = n)) + geom_bar(stat = "identity", aes(x = age, fill = age)) + labs(x = 'Age Group', y = 'Count') + ggtitle('Count by Age Group') + theme(axis.text.x = element_text(angle = 90))
+
+#########################################################################################
+gender_count <- count(stroke_prediction, gender)
+ggplot(gender_count, aes(y = n)) + geom_bar(stat = "identity", aes(x = gender, fill = gender)) + labs(x = 'Gender', y = 'Count') + ggtitle('Count by Gender')
+
+#########################################################################################
+hypertension_count <- count(stroke_prediction, hypertension)
+ggplot(hypertension_count, aes(y = n)) + geom_bar(stat = "identity", aes(x = hypertension, fill = hypertension)) + labs(x = 'Hypertension', y = 'Count') + ggtitle('Count by Hypertension')
+
+#########################################################################################
+hd_count <- count(stroke_prediction, heart_disease)
+ggplot(hd_count, aes(y = n)) + geom_bar(stat = "identity", aes(x = heart_disease, fill = heart_disease)) + labs(x = 'Heart Disease', y = 'Count') + ggtitle('Count by Heart Disease')
+
+#########################################################################################
+ss_count <- count(stroke_prediction, smoking_status)
+ggplot(ss_count, aes(y = n)) + geom_bar(stat = "identity", aes(x = smoking_status, fill = smoking_status)) + labs(x = 'Smoking Status', y = 'Count') + ggtitle('Count by Smoking Status')
+
+```
+
+
+Visualization
+```{r}
+
+#########################################################################################
+ggplot(stroke_prediction, aes(x = gender, y = stroke, fill = gender)) + geom_bar(stat = 'identity') + facet_wrap(~stroke) + labs(x = 'Gender', y = 'Count') + ggtitle('Stroke Count by Gender')
+
+#########################################################################################
+ggplot(stroke_prediction, aes(x = age, y = stroke, fill = age)) + geom_bar(stat = 'identity') + facet_wrap(~stroke) + labs(x = 'Age Group', y = 'Count') + ggtitle('Stroke Count by Age') + theme(axis.text.x = element_text(angle = 90))
+
+#########################################################################################
+ggplot(stroke_prediction, aes(x = smoking_status, y = stroke, fill = smoking_status)) + geom_bar(stat = 'identity') + facet_wrap(~stroke) + labs(x = 'Smoking Status', y = 'Count') + ggtitle('Stroke Count by Smoking Status') + theme(axis.text.x = element_text(angle = 90))
+
+#########################################################################################
+ggplot(stroke_prediction, aes(x = hypertension, y = stroke, fill = hypertension)) + geom_bar(stat = 'identity') + facet_wrap(~stroke) + labs(x = 'Hypertension', y = 'Count') + ggtitle('Stroke Count by Hypertension')
+
+#########################################################################################
+ggplot(stroke_prediction, aes(x = heart_disease, y = stroke, fill = heart_disease)) + geom_bar(stat = 'identity') + facet_wrap(~stroke) + labs(x = 'Heart Disease', y = 'Count') + ggtitle('Stroke Count by Heart Disease')
+
+#########################################################################################
+ggplot(stroke_prediction, aes(x = avg_glucose_level, y = stroke, fill = avg_glucose_level)) + geom_bar(stat = 'identity') + facet_wrap(~stroke) + labs(x = 'Glucose_Level', y = 'Count') + ggtitle('Stroke Count by Glucose Level') + theme(axis.text.x = element_text(angle = 90))
+
+
+#########################################################################################
+ggplot(stroke_prediction, aes(x = bmi, y = stroke, fill = bmi)) + geom_bar(stat = 'identity') + facet_wrap(~stroke) + labs(x = 'BMI', y = 'Count') + ggtitle('Stroke Count by Body Mass Index') + theme(axis.text.x = element_text(angle = 90))
+
+#########################################################################################
+
+```
+
+Correlation Analysis between numeric variables
+```{r}
+attach(stroke.df)
+
+# Fix the bmi column in the original data frame
+stroke.df$bmi                       <- as.numeric(stroke.df$bmi)
+stroke.df$bmi[is.na(stroke.df$bmi)] <- mean(stroke.df$bmi, na.rm = TRUE)
+
+# Change the int variables to numeric
+hypertension   <- as.numeric(stroke.df$hypertension)
+heart_disease  <- as.numeric(stroke.df$heart_disease)
+stroke         <- as.numeric(stroke.df$stroke)
+age            <- stroke.df$age
+avg_glucose    <- stroke.df$avg_glucose_level
+bmi            <- stroke.df$bmi
+
+# Recoding some variables
+smoking_status = dplyr::recode(stroke.df$smoking_status, "formerly smoked" = 1, "never smoked" = 1, "smokes" = 2, "Unknown" = 3)
+smoking_status <- as.numeric(smoking_status)
+
+# Put all numeric vectors into a data frame
+stroke_num <- data.frame(age, bmi, smoking_status, heart_disease, hypertension, avg_glucose, stroke)
+
+# Create a correlation matrix
+stroke_corr <- round(cor(stroke_num), 2)
+melted_stroke <- melt(stroke_corr)
+
+head(melted_stroke)
+```
+
+Correlation Plot
+```{r}
+# Create the correlation plot
+ggplot(data = melted_stroke, aes(x = X1, y = X2, fill = value, label = value)) + geom_tile() + scale_fill_gradient2(low = "#0C6291", high = "#A63446", mid = "#FBFEF9") + geom_text(aes(X2, X1, label = value), color = "black", size = 4) + labs(fill = "Pearson's\nCorrelation") + theme(axis.text.x = element_text(angle = 90)) + ggtitle("Correlations in Stroke Data")
+
+```
+
+
+# Association Rules Mining (Apriori)
+## Data Preparation
+```{r}
+# Include only factor variable in this analysis.
+stroke_arules <- stroke_prediction
+
+# View the structure
+str(stroke_arules)
+
+```
+There are 8 nominal variables in the new stroke data set.
+
+
+```{r}
+stroke_transactions <- as(stroke_arules, "transactions")
+
+itemFrequencyPlot(stroke_transactions, topN = 20, type = "absolute")
+```
+
+## Initial Attempt
+```{r}
+rules_stroke <- apriori(stroke_transactions, parameter = list(supp = 0.002, conf = 0.5))
+rules_stroke <- sort(rules_stroke, decreasing = TRUE, by = "lift")
+```
+
+Inspect the rules
+```{r}
+inspect(rules_stroke[1:5])
+```
+
+
+## Second Attempt
+```{r}
+rules_stroke_2 <- apriori(stroke_transactions, parameter = list(supp = 0.2, conf = 0.8))
+rules_stroke_2 <- sort(rules_stroke_2, decreasing = TRUE, by = "lift")
+```
+
+Inspect the rules
+```{r}
+inspect(rules_stroke_2[1:5])
+```
+
+
+## Third Attempt
+```{r}
+rules_stroke_3 <- apriori(stroke_transactions, parameter = list(supp = 0.4, conf = 0.9))
+rules_stroke_3 <- sort(rules_stroke_3, decreasing = TRUE, by = "lift")
+```
+
+Inspect the rules
+```{r}
+inspect(rules_stroke_3[1:5])
+```
+
+
+## Fourth Attempt
+```{r}
+rules_stroke_4 <- apriori(stroke_transactions, parameter = list(supp = 0.4, conf = 0.8))
+rules_stroke_4 <- sort(rules_stroke_4, decreasing = TRUE, by = "lift")
+```
+
+Inspect the rules
+```{r}
+inspect(rules_stroke_4[1:5])
+```
+
+
+## Fifth Attempt
+```{r}
+rules_stroke_5 <- apriori(stroke_transactions, parameter = list(supp = 0.04, conf = 1, maxlen = 3))
+rules_stroke_5 <- sort(rules_stroke_5, decreasing = TRUE, by = "lift")
+```
+
+Inspect the rules
+```{r}
+inspect(rules_stroke_5[1:5])
+```
+
+
+# Generate Stroke Rules
+```{r}
+non_stroke_rules <- apriori(stroke_transactions, parameter = list(supp = 0.3, conf = 0.9, maxlen = 3), appearance = list(rhs = "stroke=0"))
+
+non_stroke_rules <- sort(non_stroke_rules, decreasing = TRUE, by = "lift")
+
+```
+
+Inspect the rules
+```{r}
+inspect(non_stroke_rules)
+```
+
+
+## Generate rules for patients who suffered a stroke.
+# Initial Attempt
+There are only so many patients who suffered from a stroke in the data set, therefore, we set the confidence and support very low.
+Inspect the rules
+```{r}
+stroke_rules <- apriori(stroke_transactions, parameter = list(supp = 0.1, conf = 0.01, maxlen = 3), appearance = list(rhs = "stroke=1"))
+
+stroke_rules <- sort(stroke_rules, decreasing = TRUE, by = "lift")
+
+```
+
+Inspect the rules
+```{r}
+inspect(stroke_rules)
+```
+
+
+# Second Attempt
+Inspect the rules
+```{r}
+transactions <- as(stroke_arules[stroke_arules$stroke == "1",], "transactions")
+```
+
+
+```{r}
+stroke_rules_2 <- apriori(transactions, parameter = list(supp = 0.01, conf = 0.9, minlen = 4), appearance = list(rhs = "stroke=1"))
+
+stroke_rules_2 <- sort(stroke_rules_2, decreasing = TRUE, by = "lift")
+
+```
+
+Inspect the rules
+```{r}
+inspect(stroke_rules_2[1:10])
+```
+
+
+# Rules Visualizations
+```{r}
+plot(non_stroke_rules[1:5], method = "graph", shading = "lift")
+```
+
+Inspect the rules
+```{r}
+plot(stroke_rules_2[1:5], method = "graph", shading = "lift")
+```
+
+
+# Decision Trees
+
+## Preprocessing
+Create a new data frame from the stroke prediction data frame
+```{r}
+stroke.dt <- stroke_prediction
+```
+
+Split the Data Frame into training sets and test sets.
+```{r}
+set.seed(25)
+
+train_split  <- sample(nrow(stroke.dt), nrow(stroke.dt) * 2/3) 
+train_stroke <- stroke.dt[train_split,]
+test_stroke  <- stroke.dt[-train_split,]
+```
+
+Use the smote family package to remedy the class imbalance between stroke patients and non-stroke patients.
+
+```{r}
+smoteD       <- ubSMOTE(train_stroke, train_stroke$stroke, perc.over = 200, k = 5, perc.under = 200)
+
+train_stroke <- cbind(smoteD$X, smoteD$Y)
+```
+
+Remove columns
+```{r}
+# Remove the extra column
+train_stroke <- train_stroke[,-9]
+```
+
+## Decision Tree Model 1
+```{r}
+pc <- proc.time()
+
+stroke.tree <- rpart(stroke ~ ., data = train_stroke
+                     , method = 'class'
+                     , parms = list(split = 'gender')
+                     , minsplit = 50, cp = 0 )
+
+proc.time() - pc
+```
+
+```{r}
+printcp(stroke.tree)
+```
+
+Visualize the model 
+```{r}
+prp(stroke.tree, extra = 6, main="Classification Tree of Patient Stroke Prediction ", branch.col = brewer.pal(10, "Set3"), box.col = brewer.pal(10, "Set3"))
+```
+
+Test the accuracy of the model
+```{r}
+pred.tree <- predict(stroke.tree, newdata = test_stroke, type = "class")
+table(`Actual Class` = test_stroke$stroke, `Predicted Class` = pred.tree)
+```
+
+Calculate the error rate
+```{r}
+err.tree <- sum(test_stroke$stroke != pred.tree)/nrow(test_stroke)
+accuracy.tree <- round((1 - err.tree) * 100, 2)
+accuracy.tree
+```
+
+
+# Decision Tree Model 2
+```{r}
+pc <- proc.time()
+
+stroke_2.tree <- rpart(stroke ~ age, data = train_stroke
+                       , method = 'class'
+                       , control = rpart.control(minbucket = 5, minsplit = 40, cp = -1)
+                       )
+
+proc.time() - pc
+
+printcp(stroke_2.tree)
+```
+
+Visualize the model 
+```{r}
+prp(stroke_2.tree, extra = 6, main="Classification Tree of Patient Stroke Prediction", branch.col = brewer.pal(10, "Set3"), box.col = brewer.pal(10, "Set3"))
+```
+
+Test the accuracy of the model
+```{r}
+pred.tree <- predict(stroke_2.tree, newdata = test_stroke, type = "class")
+table(`Actual Class` = test_stroke$stroke, `Predicted Class` = pred.tree)
+```
+
+Calculate the error rate
+```{r}
+err_2.tree <- sum(test_stroke$stroke != pred.tree)/nrow(test_stroke)
+accuracy <- round((1 - err_2.tree) * 100, 2)
+accuracy
+```
+
+
+# Decision Tree Model 3
+```{r}
+pc <- proc.time()
+
+stroke_3.tree <- rpart(stroke ~ age + hypertension + bmi
+                       , data = train_stroke
+                       , method = 'class'
+                       , control = rpart.control(minbucket = 5, minsplit = 40, cp = -1)
+                       )
+
+proc.time() - pc
+
+printcp(stroke_3.tree)
+```
+
+Visualize the model 
+```{r}
+prp(stroke_3.tree, extra = 6, main="Classification Tree of Patient Stroke Prediction", branch.col = brewer.pal(10, "Set3"), box.col = brewer.pal(10, "Set3"))
+```
+
+Test the accuracy of the model
+```{r}
+pred.tree <- predict(stroke_3.tree, newdata = test_stroke, type = "class")
+table(`Actual Class` = test_stroke$stroke, `Predicted Class` = pred.tree)
+```
+
+Calculate the error rate
+```{r}
+err_3.tree <- sum(test_stroke$stroke != pred.tree)/nrow(test_stroke)
+accuracy <- round((1 - err_3.tree) * 100, 2)
+accuracy
+```
+
+
+# Decision Tree Model 4
+```{r}
+pc <- proc.time()
+
+stroke_4.tree <- rpart(stroke ~ age + avg_glucose_level + bmi + heart_disease + hypertension
+                       , data = train_stroke
+                       , method = 'class'
+                       , control = rpart.control(minbucket = 5, minsplit = 50, cp = -1)
+                       )
+
+proc.time() - pc
+
+printcp(stroke_4.tree)
+```
+
+Visualize the model 
+```{r}
+prp(stroke_4.tree, extra = 6, main="Classification Tree of Patient Stroke Prediction", branch.col = brewer.pal(10, "Set3"), box.col = brewer.pal(10, "Set3"))
+```
+
+Test the accuracy of the model
+```{r}
+pred.tree <- predict(stroke_4.tree, newdata = test_stroke, type = "class")
+table(`Actual Class` = test_stroke$stroke, `Predicted Class` = pred.tree)
+```
+
+Calculate the error rate
+```{r}
+err_4.tree <- sum(test_stroke$stroke != pred.tree)/nrow(test_stroke)
+accuracy <- round((1 - err_4.tree) * 100, 2)
+accuracy
+```
+
+
+
+## Naive Bayes Classifier
+
+# NB Model 1
+```{r}
+pc <- proc.time()
+
+stroke.nb <- naiveBayes(stroke ~ ., data = train_stroke)
+
+proc.time() - pc
+```
+
+Visualize the model 
+```{r}
+summary(stroke.nb)
+```
+
+Verify the Model
+```{r}
+#prediction function predicts the test target value from the model generated from train set.
+pred.nb <- predict(stroke.nb, newdata = test_stroke, type = "class")  
+
+table(`Actual Class` = test_stroke$stroke, `Predicted Class` = pred.nb)
+```
+
+
+Visualize the Predictions
+```{r}
+par(mfrow = c(1,2))
+plot(pred.nb, ylab = "Stroke", main = "NaiveBayes Plot", col="darkblue", ylim = c(0,1500))
+```
+
+Calculate the error rate
+```{r}
+err.nb <- sum(test_stroke$stroke != pred.nb)/nrow(test_stroke)
+accuracy <- round((1 - err.nb) * 100, 2)
+accuracy
+```
+
+
+# NB Model 2
+```{r}
+pc <- proc.time()
+
+stroke_2.nb <- naiveBayes(stroke ~ age 
+                          , data = train_stroke
+                          , laplace = 1)
+
+proc.time() - pc
+```
+
+Summarize the model 
+```{r}
+summary(stroke_2.nb)
+```
+
+Verify the Model
+```{r}
+#prediction function predicts the test target value from the model generated from train set.
+pred_2.nb <- predict(stroke_2.nb, newdata = test_stroke, type = "class")  
+
+table(`Actual Class` = test_stroke$stroke, `Predicted Class` = pred_2.nb)
+```
+
+
+Visualize the Predictions
+```{r}
+par(mfrow = c(1,2))
+plot(pred_2.nb, ylab = "Stroke", main = "NaiveBayes Plot", col="firebrick", ylim = c(0,1500))
+```
+
+Calculate the error rate
+```{r}
+err_2.nb <- sum(test_stroke$stroke != pred_2.nb)/nrow(test_stroke)
+accuracy <- round((1 - err_2.nb) * 100, 2)
+accuracy
+```
+
+# NB Model 3
+```{r}
+pc <- proc.time()
+
+stroke_3.nb <- naiveBayes(stroke ~ age + avg_glucose_level + smoking_status + heart_disease
+                          , data = train_stroke
+                          , laplace = 1)
+
+proc.time() - pc
+```
+
+Summarize the model 
+```{r}
+summary(stroke_3.nb)
+```
+
+Verify the Model
+```{r}
+#prediction function predicts the test target value from the model generated from train set.
+pred_3.nb <- predict(stroke_3.nb, newdata = test_stroke, type = "class")  
+
+table(`Actual Class` = test_stroke$stroke, `Predicted Class` = pred_3.nb)
+```
+
+
+Visualize the Predictions
+```{r}
+par(mfrow = c(1,2))
+plot(pred_3.nb, ylab = "Stroke", main = "NaiveBayes Plot", col="darkorchid1", ylim = c(0,1500))
+```
+
+Calculate the error rate
+```{r}
+err_3.nb <- sum(test_stroke$stroke != pred_3.nb)/nrow(test_stroke)
+accuracy <- round((1 - err_3.nb) * 100, 2)
+accuracy
+```
+
+# NB Model 4
+```{r}
+pc <- proc.time()
+
+stroke_4.nb <- naiveBayes(stroke ~ age + avg_glucose_level + bmi 
+                          + heart_disease + hypertension + smoking_status
+                          , data = train_stroke
+                          , laplace = 3)
+
+proc.time() - pc
+```
+
+Summarize the model 
+```{r}
+summary(stroke_4.nb)
+```
+
+Verify the Model
+```{r}
+#prediction function predicts the test target value from the model generated from train set.
+pred_4.nb <- predict(stroke_3.nb, newdata = test_stroke, type = "class")  
+
+table(`Actual Class` = test_stroke$stroke, `Predicted Class` = pred_4.nb)
+```
+
+
+Visualize the Predictions
+```{r}
+par(mfrow = c(1,2))
+plot(pred_4.nb, ylab = "Stroke", main = "NaiveBayes Plot", col="cyan", ylim = c(0,1500))
+```
+
+Calculate the error rate
+```{r}
+err_4.nb <- sum(test_stroke$stroke != pred_4.nb)/nrow(test_stroke)
+accuracy <- round((1 - err_4.nb) * 100, 2)
+accuracy
+```
+
+# Random Forest
+
+## Random Forest: Model 1
+```{r}
+pc <- proc.time()
+
+rf.model <- randomForest(stroke ~ . 
+                         , data = train_stroke
+                         , proximity = TRUE)
+proc.time() - pc
+```
+
+Prediction
+```{r}
+pred.forest <- predict(rf.model, newdata = test_stroke, type = "class")
+table('Actual Class' = test_stroke$stroke, 'Predicted Class' = pred.forest)
+```
+
+Test the accuracy
+```{r}
+# Calculate the error rate.
+err.rf   <- sum(test_stroke$stroke != pred.forest) / nrow(test_stroke)
+accuracy <- round((1 - err.rf) * 100, 2)
+accuracy
+```
+
+
+## Random Forest: Model 2
+```{r}
+pc <- proc.time()
+
+rf.model2 <- randomForest(stroke ~ age
+                         , data = train_stroke
+                         , proximity = TRUE)
+proc.time() - pc
+```
+
+Prediction
+```{r}
+pred_2.forest <- predict(rf.model2, newdata = test_stroke, type = "class")
+table('Actual Class' = test_stroke$stroke, 'Predicted Class' = pred_2.forest)
+```
+
+Test the accuracy
+```{r}
+# Calculate the error rate.
+err_2.rf   <- sum(test_stroke$stroke != pred_2.forest) / nrow(test_stroke)
+accuracy   <- round((1 - err_2.rf) * 100, 2)
+accuracy
+```
+
+## Random Forest: Model 3
+```{r}
+pc <- proc.time()
+
+rf.model3 <- randomForest(stroke ~ age + gender + bmi + hypertension + avg_glucose_level + heart_disease
+                         , data = train_stroke
+                         , proximity = TRUE)
+proc.time() - pc
+```
+
+Prediction
+```{r}
+pred_3.forest <- predict(rf.model3, newdata = test_stroke, type = "class")
+table('Actual Class' = test_stroke$stroke, 'Predicted Class' = pred_3.forest)
+```
+
+Test the accuracy
+```{r}
+# Calculate the error rate.
+err_3.rf   <- sum(test_stroke$stroke != pred_3.forest) / nrow(test_stroke)
+accuracy   <- round((1 - err_3.rf) * 100, 2)
+accuracy
+```
+
+
+## Random Forest: Model 4
+```{r}
+pc <- proc.time()
+
+rf.model4 <- randomForest(train_stroke
+                         , train_stroke$stroke
+                         , sampsize = 20, ntree = 10)
+proc.time() - pc
+```
+
+Prediction
+```{r}
+pred_4.forest <- predict(rf.model4, newdata = test_stroke, type = "class")
+table('Actual Class' = test_stroke$stroke, 'Predicted Class' = pred_4.forest)
+```
+
+Test the accuracy
+```{r}
+# Calculate the error rate.
+err_4.rf   <- sum(test_stroke$stroke != pred_4.forest) / nrow(test_stroke)
+accuracy <- round((1 - err_4.rf) * 100, 2)
+accuracy
+```
