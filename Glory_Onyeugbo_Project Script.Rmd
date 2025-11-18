@@ -1,6 +1,6 @@
 ---
 title: "Stroke_Prediction"
-author: "Marriah Lewis and Glory Onyeugbo"
+author: "Glory Onyeugbo"
 date: "6/18/2021"
 output: word_document
 ---
@@ -863,3 +863,4 @@ err_4.rf   <- sum(test_stroke$stroke != pred_4.forest) / nrow(test_stroke)
 accuracy <- round((1 - err_4.rf) * 100, 2)
 accuracy
 ```
+
